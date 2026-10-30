@@ -44,6 +44,11 @@ export class ManabaHttpClient {
     return body;
   }
 
+  /** Manual one-hop response for the explicitly scoped foreground attempt workflow. No URL/token debug output. */
+  async getAttemptResponse(url: string, cookies: CookieRecord[] = []): Promise<Response> {
+    return this.fetchImpl(url, { headers: this.headers(cookies), redirect: "manual" });
+  }
+
   async postForm(pathOrUrl: string, body: URLSearchParams, cookies: CookieRecord[] = []): Promise<Response> {
     const url = this.url(pathOrUrl);
     const res = await this.fetchImpl(url, {

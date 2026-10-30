@@ -90,9 +90,49 @@ utsukuba courses list --pretty
 utsukuba quizzes list <courseId> --pretty
 utsukuba reports list <courseId> --pretty
 utsukuba contents list <courseId> --pretty
+utsukuba contents inspect <pageUrlOrId> --json
 utsukuba files list <courseId> --pretty
 utsukuba files download "<file-url>" --out ./downloads
 ```
+
+`contents inspect` は、同じmanabaサイトの教材ページ・ドリル入口・既存の採点結果を
+1回のGETで読み、本文・観測したリンク・埋め込み先・値を除いたフォーム構造を表示します。
+リンク先の自動巡回やJavaScript実行はせず、認証情報・hidden値は表示しません。
+受験開始・回答入力・提出は行いません。INFOSSのテストは `drill` 形式のため、
+`quizzes list` が空でも教材本文のリンクと既存の合格記録を確認してください。
+
+## Question extraction and answer drafts
+
+```sh
+utsukuba --json contents questions <pageUrlOrId>
+utsukuba --json contents answer-plan <pageUrlOrId> --answers /private/path/answers.json
+# Equivalent namespace: utsukuba manaba contents questions ...
+```
+
+`questions` は既存ページのradio/checkbox設問を `{url, questions: [{questionId,
+type, required, prompt, options: [{optionId, text}]}]}` に構造化します。
+既存回答のchecked/selected状態・採点コメントは返しません。対応範囲はManabaの
+`ol.queryselection`直前の設問段落、または`fieldset`/`legend`です。
+未対応の自由記述・select・曖昧な構造・問題のないページはエラーにします。
+
+回答案ファイルはGit外に保存し、次の厳密なJSON形式を使います（余分なキー不可）。
+`questionId`と`optionIds`は抽出結果の文字列IDを使ってください。
+
+```json
+{"answers":[{"questionId":"qid1","optionIds":["2"],"reason":"選択理由を記述"}]}
+```
+
+全設問を重複なく含める必要があります。radioは必ず1個、必須checkboxは1個以上、
+任意checkboxは空配列でも構いません。理由は空でない文字列が必須です。
+未知の設問・他の設問の選択肢・選択肢重複・不正スキーマを拒否します。
+成功結果は`valid:true, mode:"draft", submitted:false`と、設問ごとの選択肢本文・理由です。
+`valid`は構造検証のみを意味し、正答判定や新たな採点ではありません。
+CLI自体はモデル呼出しやモデル認証情報を持ちません。抽出結果から利用者・エージェントが
+推論して案を作り、このコマンドで整合性を検証します。
+
+両コマンドは`contents inspect`と同じ許可済みの受動URLだけを、保存済みセッションで
+1回GETします。リダイレクト・自動ログイン・リンク巡回・受験開始・回答入力・POST・提出は行いません。
+hidden/password/session/CSRF値は返しません。公開教材リンクの扱いは既存のinspectから変更しません。
 
 ## KDB
 

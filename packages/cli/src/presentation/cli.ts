@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import ora from "ora";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, lstatSync, openSync, closeSync, constants } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import {
   calculateAcademicSummary,
   calculateRequirementProgress,
@@ -115,7 +115,59 @@ export function createCli(): Command {
     }
   };
 
+  const addAnswerCommands = (contents: Command) => {
+    contents.command("questions <pageUrlOrId>").description("Extract read-only radio/checkbox prompts and options without existing answers").action(target=>run("Extracting questions",({client})=>client.contents.questions(target))());
+    contents.command("answer-plan <pageUrlOrId>").description("Validate a local answer draft; never enter or submit answers")
+      .requiredOption("--answers <private-json-file>","private JSON draft file (outside Git)")
+      .action((target,cmd)=>run("Validating draft",async({client})=>{
+        let input: unknown;
+        try { input = JSON.parse(readFileSync(cmd.answers,"utf8")); }
+        catch { throw new Error("Invalid answer draft file; provide readable JSON matching the documented schema."); }
+        return client.contents.answerPlan(target,input);
+      })());
+  };
+
+  const addDrillCommands = (parent: Command) => {
+    const drills = parent.command("drills").description("Explicit foreground scoped INFOSS attempt workflow; never scheduled or automatic");
+    drills.command("open-attempt <courseId> <drillId>")
+      .description("GET the exact saved safe pending Location once; privately save response and inspect questions")
+      .action((courseId,drillId)=>run("Opening saved attempt",({client})=>client.drills.openAttempt(courseId,drillId))());
+    drills.command("step <courseId> <drillId>")
+      .description("One explicitly confirmed observed next or final submit control; no replay or retries")
+      .requiredOption("--control <exact-observed-name>","exact observed action_DrillStudent_ submit control name")
+      .requiredOption("--operation <next-or-submit>","next|submit only")
+      .requiredOption("--confirm-target <exact-canonical-url>","confirm the fixed drill landing URL")
+      .option("--answers <private-json-file>","current question draft, 0600 outside Git; next only")
+      .action((courseId,drillId,cmd)=>run("Executing confirmed attempt step",async({client})=>{
+        let answers: unknown;
+        if (cmd.answers) {
+          try {
+            const path = resolve(cmd.answers);
+            let ancestor = dirname(path);
+            for (;;) { if (existsSync(join(ancestor,".git")) || lstatSync(ancestor).isSymbolicLink()) throw new Error(); const parent=dirname(ancestor); if(parent===ancestor)break; ancestor=parent; }
+            const stat = lstatSync(path);
+            if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || (stat.mode & 0o777) !== 0o600) throw new Error();
+            const fd=openSync(path,constants.O_RDONLY|constants.O_NOFOLLOW);
+            try { answers=JSON.parse(readFileSync(fd,"utf8")); } finally { closeSync(fd); }
+          } catch { throw new Error("Invalid private answer draft; require readable 0600 JSON outside Git, without symlinks."); }
+        }
+        return client.drills.step(courseId,drillId,{operation:cmd.operation,control:cmd.control,confirmTarget:cmd.confirmTarget,answers});
+      })());
+    drills.command("verify <courseId> <drillId>")
+      .description("GET landing and new graded history evidence; old records never count as a new submission")
+      .action((courseId,drillId)=>run("Verifying provider history",({client})=>client.drills.verify(courseId,drillId))());
+    drills.command("start <courseId> <drillId>")
+      .description("Start one new verified INFOSS attempt only with exact landing URL confirmation; reserved targets cannot repeat")
+      .option("--confirm-start <exact-canonical-url>", "explicitly confirm this new attempt start")
+      .action((courseId, drillId, cmd) => run("Starting confirmed attempt", ({ client }) => client.drills.start(courseId, drillId, cmd.confirmStart))());
+    drills.command("inspect-attempt <courseId> <drillId>")
+      .description("Inspect saved response privately as sanitized text/questions/control metadata; no requests")
+      .action((courseId, drillId) => run("Inspecting saved attempt", ({ client }) => client.drills.inspectAttempt(courseId, drillId))());
+  };
+  addDrillCommands(program);
+
   const addManabaCommands = (parent: Command) => {
+    addDrillCommands(parent);
     parent
       .command("login")
       .description("Authenticate and save session cookies; credentials use macOS Keychain or Linux Secret Manager")
@@ -167,6 +219,9 @@ export function createCli(): Command {
     const contents = parent.command("contents").description("Course content commands");
     contents.command("list <courseId>").action((courseId) => run("Fetching contents", ({ client }) => client.contents.list(courseId))());
     contents.command("show <pageUrlOrId>").action((target) => run("Fetching content", ({ client }) => client.contents.show(target))());
+    contents.command("inspect <pageUrlOrId>").description("Inspect read-only content text, links, embeds and sanitized forms (one GET; no resource following)").action((target) => run("Inspecting content", ({ client }) => client.contents.inspect(target))());
+
+    addAnswerCommands(contents);
 
     const files = parent.command("files").description("File commands");
     files.command("list <target>").description("List files from a course/page/task").action((target) => run("Fetching files", ({ client }) => client.files.list(target))());
@@ -229,6 +284,9 @@ export function createCli(): Command {
   const contents = program.command("contents").description("Course content commands");
   contents.command("list <courseId>").action((courseId) => run("Fetching contents", ({ client }) => client.contents.list(courseId))());
   contents.command("show <pageUrlOrId>").action((target) => run("Fetching content", ({ client }) => client.contents.show(target))());
+  contents.command("inspect <pageUrlOrId>").description("Inspect read-only content text, links, embeds and sanitized forms (one GET; no resource following)").action((target) => run("Inspecting content", ({ client }) => client.contents.inspect(target))());
+
+  addAnswerCommands(contents);
 
   const files = program.command("files").description("File commands");
   files.command("list <target>").description("List files from a course/page/task").action((target) => run("Fetching files", ({ client }) => client.files.list(target))());

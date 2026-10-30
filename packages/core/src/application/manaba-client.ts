@@ -10,6 +10,10 @@ import type {
   TaskSummary,
   TaskType,
 } from "../domain/types";
+import { DrillUseCases } from "./drill-attempt";
+import { parseAnswerDraft, validateAnswerPlan } from "./answer-plan";
+import { parseContentQuestions } from "../infrastructure/content-questions";
+import { inspectionUrl, parseContentInspection } from "../infrastructure/content-inspection";
 import { AuthStore } from "../infrastructure/auth-store";
 import { CredentialStore } from "../infrastructure/credential-store";
 import { HttpError, ManabaHttpClient } from "../infrastructure/http-client";
@@ -34,6 +38,7 @@ export type ManabaClient = {
   quizzes: QuizUseCases;
   reports: ReportUseCases;
   contents: ContentUseCases;
+  drills: DrillUseCases;
   files: FileUseCases;
 };
 
@@ -59,6 +64,7 @@ export function createManabaClient(
     quizzes: new QuizUseCases(config, http, auth),
     reports: new ReportUseCases(config, http, auth),
     contents: new ContentUseCases(config, http, auth),
+    drills: new DrillUseCases(config, http, auth),
     files: new FileUseCases(config, http, auth),
   };
 }
@@ -244,6 +250,35 @@ export class ContentUseCases {
     const profile = await this.auth.requireProfile();
     const html = await this.http.getHtml(`course_${courseId}_page`, profile.cookies);
     return parseContentList(html, courseId, this.config.baseUrl);
+  }
+
+  async inspect(pageUrlOrId: string) {
+    const url = inspectionUrl(pageUrlOrId, this.config.baseUrl);
+    try {
+      const profile = await this.auth.requireProfile();
+      const html = await this.http.getHtml(url, profile.cookies);
+      return parseContentInspection(html, url);
+    } catch {
+      // Do not expose response bodies, redirect locations or arbitrary transport errors.
+      throw new Error("Content inspection GET failed; check the saved session or allowed page. No automatic login or redirect was attempted.");
+    }
+  }
+
+  async answerPlan(pageUrlOrId: string, answers: unknown) {
+    const draft = parseAnswerDraft(answers);
+    return validateAnswerPlan(await this.questions(pageUrlOrId), draft);
+  }
+
+  async questions(pageUrlOrId: string) {
+    const url = inspectionUrl(pageUrlOrId, this.config.baseUrl);
+    let html: string;
+    try {
+      const profile = await this.auth.requireProfile();
+      html = await this.http.getHtml(url, profile.cookies);
+    } catch {
+      throw new Error("Content questions GET failed; no automatic login or redirect was attempted.");
+    }
+    return parseContentQuestions(html, url);
   }
 
   async show(pageUrlOrId: string): Promise<ContentPageSummary> {
